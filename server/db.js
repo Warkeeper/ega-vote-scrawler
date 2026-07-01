@@ -329,6 +329,50 @@ export function getLatestDeltas(db, { search = '', metric = 'both', limit = 100 
   return { latestRun, rows };
 }
 
+export function getVoteRankings(db, { sort = 'vip', limit = 50 } = {}) {
+  const latestRun = getLatestSuccessfulRun(db);
+  if (!latestRun) return { latestRun: null, sort: normalizeRankingSort(sort), rows: [] };
+
+  const normalizedSort = normalizeRankingSort(sort);
+  const orderExpression = normalizedSort === 'public'
+    ? 's.public_votes'
+    : normalizedSort === 'final'
+      ? '(s.vip_votes * 10 + s.public_votes)'
+      : 's.vip_votes';
+  const cleanLimit = Math.min(Math.max(Number.parseInt(limit, 10) || 50, 1), 100);
+
+  const rows = db.prepare(`
+    SELECT
+      a.rowid,
+      a.election_id AS electionId,
+      a.name,
+      a.store_name AS storeName,
+      a.city,
+      a.representative_work AS representativeWork,
+      a.representative_role AS representativeRole,
+      a.cover_url AS coverUrl,
+      s.public_votes AS publicVotes,
+      s.vip_votes AS vipVotes,
+      (s.vip_votes * 10 + s.public_votes) AS finalVotes
+    FROM vote_snapshots s
+    JOIN actors a ON a.rowid = s.rowid
+    WHERE s.run_id = ?
+    ORDER BY
+      ${orderExpression} DESC,
+      s.vip_votes DESC,
+      s.public_votes DESC,
+      a.election_id ASC,
+      a.name ASC
+    LIMIT ?
+  `).all(latestRun.id, cleanLimit);
+
+  return { latestRun, sort: normalizedSort, rows };
+}
+
+function normalizeRankingSort(sort) {
+  return ['vip', 'public', 'final'].includes(sort) ? sort : 'vip';
+}
+
 export function getTrends(db, { rowids = [], rangeHours = 24 } = {}) {
   let selectedRowids = rowids.filter(Boolean);
 

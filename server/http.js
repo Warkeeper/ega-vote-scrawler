@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { getActorCount, getLatestDeltas, getLatestRun, getSummary, getTrends } from './db.js';
+import { getActorCount, getLatestDeltas, getLatestRun, getSummary, getTrends, getVoteRankings } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..');
@@ -66,6 +66,13 @@ async function handleApi(req, res, url, { db, crawler, scheduler }) {
     return;
   }
 
+  if (url.pathname === '/api/rankings') {
+    sendJson(res, 200, getVoteRankings(db, {
+      sort: url.searchParams.get('sort') || 'vip',
+      limit: numberParam(url, 'limit', 50)
+    }));
+    return;
+  }
   if (url.pathname === '/api/trends') {
     const rowids = (url.searchParams.get('rowids') || '').split(',').map((value) => value.trim()).filter(Boolean);
     sendJson(res, 200, getTrends(db, {
