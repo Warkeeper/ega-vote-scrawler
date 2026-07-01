@@ -14,6 +14,14 @@ npm start
 
 Default URL: `http://127.0.0.1:3000`
 
+When deploying under an Nginx subpath such as `/ega-vote/`, build with:
+
+```bash
+BASE_PATH=/ega-vote/ npm run build
+```
+
+The generated HTML will reference `/ega-vote/assets/...`, and the frontend will call `/ega-vote/api/...`.
+
 If port 3000 is busy:
 
 ```powershell

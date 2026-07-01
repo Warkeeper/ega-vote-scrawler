@@ -14,6 +14,14 @@ const RANGE_OPTIONS = [
   { label: '7D', value: 168 }
 ];
 
+
+const baseUrl = import.meta.env.BASE_URL.replace(/\/$/, '');
+const API_PREFIX = baseUrl === '' || baseUrl === '/' ? '' : baseUrl;
+
+function apiPath(path) {
+  return `${API_PREFIX}${path}`;
+}
+
 function App() {
   const [status, setStatus] = useState(null);
   const [summary, setSummary] = useState(null);
@@ -37,9 +45,9 @@ function App() {
       try {
         const query = new URLSearchParams({ metric, search, limit: '100' });
         const [statusRes, summaryRes, deltasRes] = await Promise.all([
-          fetch('/api/status', { signal: controller.signal }),
-          fetch(`/api/summary?rangeHours=${rangeHours}`, { signal: controller.signal }),
-          fetch(`/api/deltas?${query}`, { signal: controller.signal })
+          fetch(apiPath('/api/status'), { signal: controller.signal }),
+          fetch(apiPath(`/api/summary?rangeHours=${rangeHours}`), { signal: controller.signal }),
+          fetch(apiPath(`/api/deltas?${query}`), { signal: controller.signal })
         ]);
 
         if (!statusRes.ok || !summaryRes.ok || !deltasRes.ok) throw new Error('Dashboard API request failed');
@@ -79,7 +87,7 @@ function App() {
       return () => controller.abort();
     }
 
-    fetch(`/api/trends?rangeHours=${rangeHours}&rowids=${encodeURIComponent(rowids)}`, { signal: controller.signal })
+    fetch(apiPath(`/api/trends?rangeHours=${rangeHours}&rowids=${encodeURIComponent(rowids)}`), { signal: controller.signal })
       .then((res) => {
         if (!res.ok) throw new Error('Trend request failed');
         return res.json();
