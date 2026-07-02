@@ -50,7 +50,7 @@ function App() {
     const controller = new AbortController();
     const load = async () => {
       try {
-        const query = new URLSearchParams({ metric, search, limit: '100' });
+        const query = new URLSearchParams({ metric, search, rangeHours: String(rangeHours), limit: '100' });
         const rankingQuery = new URLSearchParams({ sort: rankingSort, limit: '50' });
         const [statusRes, summaryRes, deltasRes, rankingsRes] = await Promise.all([
           fetch(apiPath('/api/status'), { signal: controller.signal }),
@@ -160,8 +160,8 @@ function App() {
 
         <section className="summary-grid" aria-label="汇总指标">
           <MetricCard label="总演员数" value={summary?.actorCount || 0} accent="neutral" />
-          <MetricCard label="大众票增长" value={summary?.latestPublicGrowth || 0} accent="public" prefix="+" />
-          <MetricCard label="VIP票增长" value={summary?.latestVipGrowth || 0} accent="vip" prefix="+" />
+          <MetricCard label="大众票增长" value={summary?.rangePublicGrowth || 0} detail={rangeLabel(rangeHours)} accent="public" prefix="+" />
+          <MetricCard label="VIP票增长" value={summary?.rangeVipGrowth || 0} detail={rangeLabel(rangeHours)} accent="vip" prefix="+" />
           <MetricCard
             label="增长最高"
             value={summary?.topMover?.name || '等待数据'}
@@ -196,7 +196,7 @@ function App() {
 
         <section className="dashboard-grid">
           <div className="panel leaderboard-panel">
-            <PanelHeader title="每小时增长榜" meta={intervalLabel(deltas.rows[0])} />
+            <PanelHeader title="范围增长榜" meta={rangeLabel(rangeHours)} />
             <GrowthTable rows={deltas.rows} selectedRowid={selectedActor?.rowid} onSelect={setSelectedRowid} />
           </div>
 
@@ -206,7 +206,7 @@ function App() {
           </div>
 
           <div className="panel bar-panel">
-            <PanelHeader title="最新周期增长" meta="最近一次间隔" />
+            <PanelHeader title="范围累计增长" meta={rangeLabel(rangeHours)} />
             <BarChart rows={deltas.rows.slice(0, 8)} metric={metric} />
           </div>
 
@@ -228,7 +228,7 @@ function StatusChip({ label, value }) {
 
 function MetricCard({ label, value, detail, accent, prefix = '' }) {
   const numeric = typeof value === 'number';
-  const display = numeric ? `${prefix}${formatNumber(value)}` : value;
+  const display = numeric ? formatMetricValue(value, prefix) : value;
   return (
     <article className="metric-card" data-accent={accent}>
       <span>{label}</span>
@@ -526,6 +526,11 @@ function formatCountdown(value, now) {
 
 function formatNumber(value) {
   return new Intl.NumberFormat('en-US').format(value || 0);
+}
+
+function formatMetricValue(value, prefix) {
+  if (prefix === '+') return `${value > 0 ? '+' : ''}${formatNumber(value)}`;
+  return `${prefix}${formatNumber(value)}`;
 }
 
 function formatDelta(value) {

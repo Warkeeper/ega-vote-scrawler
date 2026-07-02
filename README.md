@@ -38,7 +38,7 @@ The first successful crawl creates the baseline snapshot. Hourly growth values a
 
 - `GET /api/status`
 - `GET /api/summary?rangeHours=24`
-- `GET /api/deltas?search=&metric=both&limit=100`
+- `GET /api/deltas?search=&metric=both&rangeHours=24&limit=100`
 - `GET /api/trends?rowids=<rowid,rowid>&rangeHours=24`
 
 ## Verification

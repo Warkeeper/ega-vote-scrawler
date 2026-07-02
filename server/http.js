@@ -61,6 +61,7 @@ async function handleApi(req, res, url, { db, crawler, scheduler }) {
     sendJson(res, 200, getLatestDeltas(db, {
       search: url.searchParams.get('search') || '',
       metric: url.searchParams.get('metric') || 'both',
+      rangeHours: numberParam(url, 'rangeHours', 24),
       limit: numberParam(url, 'limit', 100)
     }));
     return;

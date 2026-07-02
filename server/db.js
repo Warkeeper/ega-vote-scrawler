@@ -73,6 +73,7 @@ export function initDatabase(db) {
     CREATE INDEX IF NOT EXISTS idx_snapshots_run ON vote_snapshots(run_id);
     CREATE INDEX IF NOT EXISTS idx_deltas_run ON vote_deltas(run_id);
     CREATE INDEX IF NOT EXISTS idx_deltas_row_time ON vote_deltas(rowid, captured_at);
+    CREATE INDEX IF NOT EXISTS idx_deltas_time_row ON vote_deltas(captured_at, rowid);
   `);
 }
 
@@ -219,6 +220,7 @@ export function getActorCount(db) {
 export function getSummary(db, rangeHours = 24) {
   const latestRun = getLatestSuccessfulRun(db);
   const actorCount = getActorCount(db);
+  const cleanRangeHours = normalizeRangeHours(rangeHours);
   if (!latestRun) {
     return {
       actorCount,
@@ -227,6 +229,7 @@ export function getSummary(db, rangeHours = 24) {
       latestVipGrowth: 0,
       rangePublicGrowth: 0,
       rangeVipGrowth: 0,
+      rangeHours: cleanRangeHours,
       topMover: null
     };
   }
@@ -239,7 +242,7 @@ export function getSummary(db, rangeHours = 24) {
     WHERE run_id = ?
   `).get(latestRun.id);
 
-  const since = new Date(Date.now() - rangeHours * 3600000).toISOString();
+  const since = rangeStartIso(cleanRangeHours);
   const range = db.prepare(`
     SELECT
       COALESCE(SUM(public_delta), 0) AS publicGrowth,
@@ -249,16 +252,24 @@ export function getSummary(db, rangeHours = 24) {
   `).get(since);
 
   const topMover = db.prepare(`
+    WITH range_deltas AS (
+      SELECT
+        rowid,
+        COALESCE(SUM(public_delta), 0) AS publicDelta,
+        COALESCE(SUM(vip_delta), 0) AS vipDelta
+      FROM vote_deltas
+      WHERE captured_at >= ?
+      GROUP BY rowid
+    )
     SELECT
       a.rowid, a.election_id AS electionId, a.name, a.store_name AS storeName, a.city,
-      d.public_delta AS publicDelta, d.vip_delta AS vipDelta,
-      (d.public_delta + d.vip_delta) AS totalDelta
-    FROM vote_deltas d
-    JOIN actors a ON a.rowid = d.rowid
-    WHERE d.run_id = ?
-    ORDER BY totalDelta DESC, d.public_delta DESC, d.vip_delta DESC
+      rd.publicDelta, rd.vipDelta,
+      (rd.publicDelta + rd.vipDelta) AS totalDelta
+    FROM range_deltas rd
+    JOIN actors a ON a.rowid = rd.rowid
+    ORDER BY totalDelta DESC, rd.publicDelta DESC, rd.vipDelta DESC
     LIMIT 1
-  `).get(latestRun.id) || null;
+  `).get(since) || null;
 
   return {
     actorCount,
@@ -267,25 +278,53 @@ export function getSummary(db, rangeHours = 24) {
     latestVipGrowth: latest.vipGrowth,
     rangePublicGrowth: range.publicGrowth,
     rangeVipGrowth: range.vipGrowth,
+    rangeHours: cleanRangeHours,
     topMover
   };
 }
 
-export function getLatestDeltas(db, { search = '', metric = 'both', limit = 100 } = {}) {
+function normalizeRangeHours(rangeHours) {
+  const parsed = Number.parseInt(rangeHours, 10);
+  if (!Number.isFinite(parsed)) return 24;
+  return Math.min(Math.max(parsed, 1), 24 * 365);
+}
+
+function rangeStartIso(rangeHours) {
+  return new Date(Date.now() - normalizeRangeHours(rangeHours) * 3600000).toISOString();
+}
+
+export function getLatestDeltas(db, { search = '', metric = 'both', limit = 100, rangeHours = 24 } = {}) {
   const latestRun = getLatestSuccessfulRun(db);
-  if (!latestRun) return { latestRun: null, rows: [] };
+  const cleanRangeHours = normalizeRangeHours(rangeHours);
+  if (!latestRun) return { latestRun: null, rangeHours: cleanRangeHours, rows: [] };
 
   const normalizedMetric = ['public', 'vip', 'both'].includes(metric) ? metric : 'both';
   const orderExpression = normalizedMetric === 'public'
-    ? 'COALESCE(d.public_delta, -999999999)'
+    ? 'COALESCE(rd.public_delta, 0)'
     : normalizedMetric === 'vip'
-      ? 'COALESCE(d.vip_delta, -999999999)'
-      : 'COALESCE(d.public_delta, -999999999) + COALESCE(d.vip_delta, -999999999)';
+      ? 'COALESCE(rd.vip_delta, 0)'
+      : 'COALESCE(rd.public_delta, 0) + COALESCE(rd.vip_delta, 0)';
 
   const cleanLimit = Math.min(Math.max(Number.parseInt(limit, 10) || 100, 1), 500);
-  const like = `%${search.toLowerCase()}%`;
+  const cleanSearch = String(search || '').toLowerCase();
+  const like = `%${cleanSearch}%`;
+  const since = rangeStartIso(cleanRangeHours);
 
   const rows = db.prepare(`
+    WITH range_deltas AS (
+      SELECT
+        rowid,
+        COALESCE(SUM(public_delta), 0) AS public_delta,
+        COALESCE(SUM(vip_delta), 0) AS vip_delta
+      FROM vote_deltas
+      WHERE captured_at >= ?
+      GROUP BY rowid
+    ),
+    latest_deltas AS (
+      SELECT rowid, previous_snapshot_id, minutes_since_previous
+      FROM vote_deltas
+      WHERE run_id = ?
+    )
     SELECT
       a.rowid,
       a.election_id AS electionId,
@@ -303,13 +342,14 @@ export function getLatestDeltas(db, { search = '', metric = 'both', limit = 100 
       a.cover_url AS coverUrl,
       s.public_votes AS publicVotes,
       s.vip_votes AS vipVotes,
-      d.public_delta AS publicDelta,
-      d.vip_delta AS vipDelta,
-      d.minutes_since_previous AS minutesSincePrevious,
-      d.previous_snapshot_id AS previousSnapshotId
+      COALESCE(rd.public_delta, 0) AS publicDelta,
+      COALESCE(rd.vip_delta, 0) AS vipDelta,
+      ld.minutes_since_previous AS minutesSincePrevious,
+      ld.previous_snapshot_id AS previousSnapshotId
     FROM vote_snapshots s
     JOIN actors a ON a.rowid = s.rowid
-    LEFT JOIN vote_deltas d ON d.run_id = s.run_id AND d.rowid = s.rowid
+    LEFT JOIN range_deltas rd ON rd.rowid = s.rowid
+    LEFT JOIN latest_deltas ld ON ld.rowid = s.rowid
     WHERE s.run_id = ?
       AND (
         ? = ''
@@ -319,14 +359,13 @@ export function getLatestDeltas(db, { search = '', metric = 'both', limit = 100 
         OR lower(a.city) LIKE ?
       )
     ORDER BY
-      CASE WHEN d.previous_snapshot_id IS NULL THEN 1 ELSE 0 END ASC,
       ${orderExpression} DESC,
       s.public_votes DESC,
       s.vip_votes DESC
     LIMIT ?
-  `).all(latestRun.id, search, like, like, like, like, cleanLimit);
+  `).all(since, latestRun.id, latestRun.id, cleanSearch, like, like, like, like, cleanLimit);
 
-  return { latestRun, rows };
+  return { latestRun, rangeHours: cleanRangeHours, rows };
 }
 
 export function getVoteRankings(db, { sort = 'vip', limit = 50 } = {}) {
@@ -384,7 +423,7 @@ export function getTrends(db, { rowids = [], rangeHours = 24 } = {}) {
   selectedRowids = selectedRowids.slice(0, 8);
   if (selectedRowids.length === 0) return { actors: [], series: [] };
 
-  const since = new Date(Date.now() - rangeHours * 3600000).toISOString();
+  const since = rangeStartIso(rangeHours);
   const placeholders = selectedRowids.map(() => '?').join(', ');
 
   const actors = db.prepare(`
